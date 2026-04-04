@@ -133,14 +133,34 @@ export interface DiffStats {
 // 葉の変更だけを数える。コンテナ自体は子の集計に現れるため数えない
 export function diffStats(node: DiffNode): DiffStats {
   const stats: DiffStats = { added: 0, removed: 0, changed: 0 };
+  for (const leaf of flattenLeaves(node)) {
+    if (leaf.kind === 'added') stats.added += 1;
+    else if (leaf.kind === 'removed') stats.removed += 1;
+    else if (leaf.kind === 'changed') stats.changed += 1;
+  }
+  return stats;
+}
+
+export interface LeafChange {
+  kind: Exclude<DiffKind, 'unchanged'>;
+  path: string;
+  before?: Json;
+  after?: Json;
+}
+
+// 木を深さ優先でたどり、変更のある葉(追加・削除・変更)だけを順に集める。
+// 集計・マークダウン出力・パスでの絞り込みが共通して使う。
+export function flattenLeaves(node: DiffNode): LeafChange[] {
+  const out: LeafChange[] = [];
   const visit = (n: DiffNode): void => {
     if (n.children.length === 0) {
-      if (n.kind === 'added') stats.added += 1;
-      else if (n.kind === 'removed') stats.removed += 1;
-      else if (n.kind === 'changed') stats.changed += 1;
+      if (n.kind !== 'unchanged') {
+        out.push({ kind: n.kind, path: n.path, before: n.before, after: n.after });
+      }
+      return;
     }
     n.children.forEach(visit);
   };
   visit(node);
-  return stats;
+  return out;
 }
