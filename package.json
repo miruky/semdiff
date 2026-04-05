@@ -1,9 +1,9 @@
 {
   "name": "semdiff",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "JSONを構造単位で比較する意味的diffビューア",
+  "description": "JSON・YAMLを構造単位で比較する意味的diffビューア",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -12,8 +12,13 @@
     "lint": "eslint .",
     "fmt": "prettier --write ."
   },
+  "dependencies": {
+    "gsap": "^3.12.5",
+    "js-yaml": "^4.1.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@types/js-yaml": "^4.0.9",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.3.0",
