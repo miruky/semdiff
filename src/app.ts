@@ -1,5 +1,6 @@
 import { diffJson, diffStats, type DiffNode, type Json } from './lib/diff';
-import { parseInput, type Format } from './lib/parse';
+import { affixDiff } from './lib/inline';
+import { detectFormat, parseInput, type Format } from './lib/parse';
 import { toJsonPatch } from './lib/patch';
 import { toMarkdown } from './lib/report';
 import { decodeState, encodeState, type ShareState } from './lib/share';
@@ -31,6 +32,31 @@ function short(value: Json | undefined): string {
   if (value === undefined) return '';
   const text = JSON.stringify(value);
   return text.length > 80 ? `${text.slice(0, 77)}…` : text;
+}
+
+function isPrimitive(value: Json | undefined): boolean {
+  return value === null || value === undefined || typeof value !== 'object';
+}
+
+// ドロップされたファイル名の拡張子から入力形式を推す。判らなければ自動判別に委ねる。
+function formatFromName(name: string): Format | null {
+  const ext = name.toLowerCase().split('.').pop();
+  if (ext === 'json' || ext === 'jsonc') return 'json';
+  if (ext === 'yaml' || ext === 'yml') return 'yaml';
+  if (ext === 'toml') return 'toml';
+  return null;
+}
+
+// 接頭辞・変化部・接尾辞を順に流し込み、変化部だけを下線つきで強調する。
+function appendAffix(target: HTMLElement, prefix: string, mid: string, suffix: string): void {
+  if (prefix) target.append(document.createTextNode(prefix));
+  if (mid) {
+    const span = document.createElement('span');
+    span.className = 'vchg';
+    span.textContent = mid;
+    target.appendChild(span);
+  }
+  if (suffix) target.append(document.createTextNode(suffix));
 }
 
 export class App {
@@ -75,12 +101,15 @@ export class App {
             <div class="editor">
               <div class="editor__head">
                 <label class="editor__label" for="before"><b>変更前</b>before</label>
-                <select class="fmt" data-id="fmt-before" aria-label="変更前の形式">
-                  <option value="auto">自動判別</option>
-                  <option value="json">JSON</option>
-                  <option value="yaml">YAML</option>
-                  <option value="toml">TOML</option>
-                </select>
+                <span class="fmt-group">
+                  <span class="detected" data-id="detected-before" aria-hidden="true"></span>
+                  <select class="fmt" data-id="fmt-before" aria-label="変更前の形式">
+                    <option value="auto">自動判別</option>
+                    <option value="json">JSON</option>
+                    <option value="yaml">YAML</option>
+                    <option value="toml">TOML</option>
+                  </select>
+                </span>
               </div>
               <textarea id="before" data-id="before" spellcheck="false" placeholder="変更前のJSON・YAML・TOML"></textarea>
               <p class="parse-error" data-id="error-before" role="alert" hidden></p>
@@ -88,12 +117,15 @@ export class App {
             <div class="editor">
               <div class="editor__head">
                 <label class="editor__label" for="after"><b>変更後</b>after</label>
-                <select class="fmt" data-id="fmt-after" aria-label="変更後の形式">
-                  <option value="auto">自動判別</option>
-                  <option value="json">JSON</option>
-                  <option value="yaml">YAML</option>
-                  <option value="toml">TOML</option>
-                </select>
+                <span class="fmt-group">
+                  <span class="detected" data-id="detected-after" aria-hidden="true"></span>
+                  <select class="fmt" data-id="fmt-after" aria-label="変更後の形式">
+                    <option value="auto">自動判別</option>
+                    <option value="json">JSON</option>
+                    <option value="yaml">YAML</option>
+                    <option value="toml">TOML</option>
+                  </select>
+                </span>
               </div>
               <textarea id="after" data-id="after" spellcheck="false" placeholder="変更後のJSON・YAML・TOML"></textarea>
               <p class="parse-error" data-id="error-after" role="alert" hidden></p>
@@ -237,7 +269,45 @@ export class App {
       btn.addEventListener('click', () => this.handleAction(btn.dataset.act ?? ''));
     });
 
+    this.wireDropZones();
     document.addEventListener('keydown', (e) => this.onKeydown(e));
+  }
+
+  // 各エディタへファイルをドロップすると中身を読み込み、拡張子から形式を推す。
+  private wireDropZones(): void {
+    this.root.querySelectorAll<HTMLElement>('.editor').forEach((editor) => {
+      const ta = editor.querySelector('textarea');
+      if (!ta) return;
+      editor.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        editor.classList.add('is-dragover');
+      });
+      editor.addEventListener('dragleave', (e) => {
+        if (!editor.contains(e.relatedTarget as Node | null))
+          editor.classList.remove('is-dragover');
+      });
+      editor.addEventListener('drop', (e) => {
+        e.preventDefault();
+        editor.classList.remove('is-dragover');
+        const file = e.dataTransfer?.files?.[0];
+        if (file) void this.loadFile(file, ta);
+      });
+    });
+  }
+
+  private async loadFile(file: File, ta: HTMLTextAreaElement): Promise<void> {
+    try {
+      ta.value = await file.text();
+      const fmt = formatFromName(file.name);
+      if (fmt) {
+        const id = ta.dataset.id === 'after' ? 'fmt-after' : 'fmt-before';
+        (this.el[id] as HTMLSelectElement).value = fmt;
+      }
+      this.onInput();
+      this.toast(`${file.name} を読み込んだ`);
+    } catch {
+      this.toast('ファイルを読み込めなかった');
+    }
   }
 
   private onInput(): void {
@@ -503,9 +573,11 @@ export class App {
     const error = this.el[`error-${id}`]!;
     if (text.trim() === '') {
       error.hidden = true;
+      this.showDetected(id, text);
       return { state: 'empty' };
     }
     const result = parseInput(text, this.fmt(id));
+    this.showDetected(id, text);
     if (result.ok) {
       error.hidden = true;
       return { state: 'ok', value: result.value };
@@ -513,6 +585,13 @@ export class App {
     error.textContent = result.error;
     error.hidden = false;
     return { state: 'error' };
+  }
+
+  // 形式が自動判別のとき、推定した形式を小さく添えて透明性を持たせる。
+  private showDetected(id: 'before' | 'after', text: string): void {
+    const el = this.el[`detected-${id}`];
+    if (!el) return;
+    el.textContent = this.fmt(id) === 'auto' && text.trim() !== '' ? detectFormat(text) : '';
   }
 
   private update(): void {
@@ -649,17 +728,38 @@ export class App {
     const value = document.createElement('span');
     value.className = 'row__value';
     if (node.kind === 'changed') {
-      const del = document.createElement('del');
-      del.textContent = short(node.before);
-      const arrow = document.createElement('span');
-      arrow.className = 'row__arrow';
-      arrow.textContent = '→';
-      value.append(del, arrow, document.createTextNode(short(node.after)));
+      this.fillChangedValue(value, node.before, node.after);
     } else {
       value.textContent = short(node.kind === 'removed' ? node.before : node.after);
     }
     row.appendChild(value);
     return row;
+  }
+
+  // 変更行の値。両辺がプリミティブなら共通部分を残して変わった箇所だけを強調し、
+  // 型ごと変わった場合(配列→オブジェクトなど)は素のまま前後を並べる。
+  private fillChangedValue(
+    value: HTMLElement,
+    before: Json | undefined,
+    after: Json | undefined,
+  ): void {
+    const del = document.createElement('del');
+    const arrow = document.createElement('span');
+    arrow.className = 'row__arrow';
+    arrow.textContent = '→';
+    const ins = document.createElement('span');
+
+    const a = JSON.stringify(before ?? null);
+    const b = JSON.stringify(after ?? null);
+    if (isPrimitive(before) && isPrimitive(after) && a.length + b.length <= 160) {
+      const { prefix, suffix, fromMid, toMid } = affixDiff(a, b);
+      appendAffix(del, prefix, fromMid, suffix);
+      appendAffix(ins, prefix, toMid, suffix);
+    } else {
+      del.textContent = short(before);
+      ins.textContent = short(after);
+    }
+    value.append(del, arrow, ins);
   }
 
   // パスを描く。絞り込み中は一致部分を強調し、通常は末端のキーを太字にする。

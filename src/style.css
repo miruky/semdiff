@@ -304,6 +304,25 @@ body {
   margin-right: var(--s1);
 }
 
+.fmt-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s1);
+}
+
+/* 自動判別で推定した形式。控えめに添える */
+.detected {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.detected:empty {
+  display: none;
+}
+
 .fmt {
   font-family: var(--mono);
   font-size: 11px;
@@ -349,6 +368,12 @@ textarea::placeholder {
 textarea:focus {
   outline: none;
   border-bottom-color: var(--accent);
+}
+
+/* ファイルをドラッグして重ねている間の受け皿表示 */
+.editor.is-dragover textarea {
+  border-bottom-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .parse-error {
@@ -642,6 +667,21 @@ details[open] > .branch__summary > .branch__caret {
 .row__arrow {
   color: var(--text-faint);
   margin: 0 4px;
+}
+
+/* 変更後の値で、前の値と違う桁だけを校正の見え消しのように際立たせる */
+.row__value .vchg {
+  background: var(--changed-wash);
+  color: var(--changed);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* 見え消し側(変更前)は素のまま。全体が打ち消されるので強調しない */
+.row__value del .vchg {
+  background: none;
+  color: inherit;
+  padding: 0;
 }
 
 .row--added .row__sign,
