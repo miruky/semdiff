@@ -1,9 +1,11 @@
 // 入力テキストを意味的diffが扱えるJSON値に変換する。
 // JSONはコメントと末尾カンマを許容(JSONC)し、YAMLはJSON互換のスキーマで読む。
+// TOMLはsmol-tomlで読み、JSONに無い日時はISO文字列へ寄せて比較できるようにする。
 import yaml from 'js-yaml';
+import { parse as parseToml } from 'smol-toml';
 import type { Json } from './diff';
 
-export type Format = 'auto' | 'json' | 'yaml';
+export type Format = 'auto' | 'json' | 'yaml' | 'toml';
 
 export type ParseResult = { ok: true; value: Json } | { ok: false; error: string };
 
@@ -81,13 +83,27 @@ export function stripTrailingCommas(input: string): string {
   return out;
 }
 
-// JSONともYAMLとも取れる入力の判別。先頭が { か [ ならJSON、それ以外はYAML寄りに倒す。
-export function detectFormat(text: string): 'json' | 'yaml' {
+// TOML特有の行(bareキーの = 代入、または [table] / [[array]] 見出し)があるか。
+// YAMLは key: value で = を使わないため、これらは形式の決め手になる。
+function looksLikeToml(text: string): boolean {
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    if (/^[A-Za-z0-9_."'-]+(\s*\.\s*[A-Za-z0-9_."'-]+)*\s*=\s*\S/.test(line)) return true;
+    if (/^\[\[?\s*[A-Za-z0-9_."'.\s-]+\s*\]\]?\s*(#.*)?$/.test(line)) return true;
+  }
+  return false;
+}
+
+// 形式の自動判別。先頭が { " ならJSON、TOML特有の行があればTOMLとする。
+// 先頭が [ はJSON配列ともTOMLの [table] とも取れるため、TOML判定を先に通す。
+export function detectFormat(text: string): 'json' | 'yaml' | 'toml' {
   const trimmed = text.trim();
   if (trimmed === '') return 'json';
   const head = trimmed[0]!;
-  if (head === '{' || head === '[') return 'json';
-  if (head === '"') return 'json';
+  if (head === '{' || head === '"') return 'json';
+  if (looksLikeToml(text)) return 'toml';
+  if (head === '[') return 'json';
   return 'yaml';
 }
 
@@ -95,6 +111,23 @@ function ensureJsonValue(value: unknown): Json {
   // js-yamlにJSON_SCHEMAを渡しているため、ここに来るのはJSON互換の値のみ。
   // undefinedだけはJSONに無いのでnullへ寄せる。
   return (value ?? null) as Json;
+}
+
+// TOMLの解析結果をJSON互換の値へ寄せる。日時(Date)はISO文字列に、
+// それ以外の入れ子は再帰的にたどる。比較ロジックがJSON値だけを前提にするため。
+function normalizeToml(value: unknown): Json {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'bigint') return Number(value);
+  if (Array.isArray(value)) return value.map(normalizeToml);
+  if (typeof value === 'object') {
+    const out: { [key: string]: Json } = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = normalizeToml(v);
+    }
+    return out;
+  }
+  return value as Json;
 }
 
 export function parseInput(text: string, format: Format): ParseResult {
@@ -106,6 +139,13 @@ export function parseInput(text: string, format: Format): ParseResult {
       return { ok: true, value: ensureJsonValue(value) };
     } catch (cause) {
       return { ok: false, error: `YAMLとして読めない: ${(cause as Error).message}` };
+    }
+  }
+  if (effective === 'toml') {
+    try {
+      return { ok: true, value: normalizeToml(parseToml(text)) };
+    } catch (cause) {
+      return { ok: false, error: `TOMLとして読めない: ${(cause as Error).message}` };
     }
   }
   try {

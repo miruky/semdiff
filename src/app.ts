@@ -3,7 +3,7 @@ import { parseInput, type Format } from './lib/parse';
 import { toJsonPatch } from './lib/patch';
 import { toMarkdown } from './lib/report';
 import { decodeState, encodeState, type ShareState } from './lib/share';
-import { caret, logoMark, monitor, moon, sun } from './ui/icons';
+import { caret, chevronDown, chevronUp, logoMark, monitor, moon, sun } from './ui/icons';
 import { countUp, playEntrance, revealRows } from './ui/motion';
 
 const SAMPLE_BEFORE = `{
@@ -39,6 +39,8 @@ export class App {
   private filterText = '';
   private lastRoot: DiffNode | null = null;
   private toastTimer = 0;
+  private changeRows: HTMLElement[] = [];
+  private currentChange = -1;
 
   constructor(private readonly root: HTMLElement) {
     this.render();
@@ -57,7 +59,7 @@ export class App {
           <div>
             <p class="masthead__kicker"><span class="masthead__mark">${logoMark}</span>意味的差分 / structural diff</p>
             <h1 class="masthead__title" data-enter>semdiff</h1>
-            <p class="masthead__lede" data-enter>2つのJSON・YAMLを値の構造として突き合わせ、追加・削除・変更をパスつきで示す。キーの並び替えや整形の違いは差分にしない。</p>
+            <p class="masthead__lede" data-enter>2つのJSON・YAML・TOMLを値の構造として突き合わせ、追加・削除・変更をパスつきで示す。キーの並び替えや整形の違いは差分にしない。</p>
           </div>
           <div class="controls" data-enter>
             <div class="seg" role="group" aria-label="配色テーマ">
@@ -77,9 +79,10 @@ export class App {
                   <option value="auto">自動判別</option>
                   <option value="json">JSON</option>
                   <option value="yaml">YAML</option>
+                  <option value="toml">TOML</option>
                 </select>
               </div>
-              <textarea id="before" data-id="before" spellcheck="false" placeholder="変更前のJSONまたはYAML"></textarea>
+              <textarea id="before" data-id="before" spellcheck="false" placeholder="変更前のJSON・YAML・TOML"></textarea>
               <p class="parse-error" data-id="error-before" role="alert" hidden></p>
             </div>
             <div class="editor">
@@ -89,9 +92,10 @@ export class App {
                   <option value="auto">自動判別</option>
                   <option value="json">JSON</option>
                   <option value="yaml">YAML</option>
+                  <option value="toml">TOML</option>
                 </select>
               </div>
-              <textarea id="after" data-id="after" spellcheck="false" placeholder="変更後のJSONまたはYAML"></textarea>
+              <textarea id="after" data-id="after" spellcheck="false" placeholder="変更後のJSON・YAML・TOML"></textarea>
               <p class="parse-error" data-id="error-after" role="alert" hidden></p>
             </div>
           </section>
@@ -110,6 +114,11 @@ export class App {
               <h2 class="results__title"><span class="kicker">差分</span>構造diff</h2>
               <div class="results__tools">
                 <span class="stats" data-id="stats"></span>
+                <span class="diffnav" data-id="diffnav" hidden>
+                  <button type="button" class="navbtn" data-act="prev-change" aria-label="前の差分へ" title="前の差分 (p)">${chevronUp}</button>
+                  <span class="diffnav__pos" data-id="navpos" aria-live="polite"></span>
+                  <button type="button" class="navbtn" data-act="next-change" aria-label="次の差分へ" title="次の差分 (n)">${chevronDown}</button>
+                </span>
                 <input type="search" class="filter" data-id="filter" placeholder="パスで絞り込み" aria-label="パスで絞り込み">
                 <label class="opt"><input type="checkbox" data-id="hide-unchanged" checked>変更なしを畳む</label>
                 <button type="button" class="txt-btn" data-act="expand">すべて開く</button>
@@ -123,7 +132,7 @@ export class App {
         <footer class="footer">
           <p>比較はすべてブラウザ内で完結し、貼られたデータは送信しない。共有リンクは入力をURLに符号化したもので、サーバーには保存されない。</p>
           <p class="shortcuts">
-            <kbd>Alt</kbd>+<kbd>S</kbd> 入れ替え&ensp;<kbd>Alt</kbd>+<kbd>E</kbd> 例&ensp;<kbd>Alt</kbd>+<kbd>U</kbd> 畳む&ensp;<kbd>/</kbd> 絞り込み
+            <kbd>Alt</kbd>+<kbd>S</kbd> 入れ替え&ensp;<kbd>Alt</kbd>+<kbd>E</kbd> 例&ensp;<kbd>Alt</kbd>+<kbd>U</kbd> 畳む&ensp;<kbd>n</kbd>/<kbd>p</kbd> 差分送り&ensp;<kbd>/</kbd> 絞り込み
           </p>
         </footer>
       </div>
@@ -252,6 +261,18 @@ export class App {
       this.update();
       return;
     }
+    if (!editing && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (e.key === 'n') {
+        e.preventDefault();
+        this.gotoChange(1);
+        return;
+      }
+      if (e.key === 'p') {
+        e.preventDefault();
+        this.gotoChange(-1);
+        return;
+      }
+    }
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
     const map: Record<string, string> = {
       s: 'swap',
@@ -317,7 +338,65 @@ export class App {
           (d as HTMLDetailsElement).open = act === 'expand';
         });
         break;
+      case 'next-change':
+        this.gotoChange(1);
+        break;
+      case 'prev-change':
+        this.gotoChange(-1);
+        break;
     }
+  }
+
+  // ---- 差分の移動 ----
+
+  // 描画後に変更行を集め直す。絞り込みや畳みで表示が変わるたびに呼ぶ。
+  private indexChanges(): void {
+    const tree = this.el['tree']!;
+    this.changeRows = [
+      ...tree.querySelectorAll<HTMLElement>('.row--added, .row--removed, .row--changed'),
+    ];
+    this.currentChange = -1;
+    const nav = this.el['diffnav']!;
+    if (this.changeRows.length === 0) {
+      this.clearChanges();
+      return;
+    }
+    nav.hidden = false;
+    this.el['navpos']!.textContent = `— / ${this.changeRows.length}`;
+  }
+
+  private clearChanges(): void {
+    this.changeRows = [];
+    this.currentChange = -1;
+    this.el['diffnav']!.hidden = true;
+    this.el['navpos']!.textContent = '';
+  }
+
+  // 前後の変更へ移る。端では巻き戻し、畳まれた親を開いて中央に送る。
+  private gotoChange(delta: number): void {
+    const n = this.changeRows.length;
+    if (n === 0) return;
+    this.currentChange =
+      this.currentChange === -1 ? (delta > 0 ? 0 : n - 1) : (this.currentChange + delta + n) % n;
+    this.changeRows.forEach((row, i) =>
+      row.classList.toggle('is-current', i === this.currentChange),
+    );
+    const target = this.changeRows[this.currentChange]!;
+    this.openAncestors(target);
+    target.scrollIntoView({ block: 'center', behavior: this.motionOk() ? 'smooth' : 'auto' });
+    this.el['navpos']!.textContent = `${this.currentChange + 1} / ${n}`;
+  }
+
+  private openAncestors(el: HTMLElement): void {
+    let node = el.parentElement;
+    while (node && node !== this.el['tree']) {
+      if (node.tagName === 'DETAILS') (node as HTMLDetailsElement).open = true;
+      node = node.parentElement;
+    }
+  }
+
+  private motionOk(): boolean {
+    return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
 
   private shareLink(): void {
@@ -474,6 +553,7 @@ export class App {
     }
     tree.appendChild(rendered);
     revealRows([...tree.querySelectorAll('.row')]);
+    this.indexChanges();
   }
 
   private showNote(message: string): void {
@@ -481,6 +561,7 @@ export class App {
     note.className = 'note note--center';
     note.textContent = message;
     this.el['tree']!.replaceChildren(note);
+    this.clearChanges();
   }
 
   private renderStats(counts: { added: number; removed: number; changed: number }): void {

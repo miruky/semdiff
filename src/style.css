@@ -448,6 +448,50 @@ textarea:focus {
   color: var(--changed);
 }
 
+/* ---- 差分間の移動 ---- */
+.diffnav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.diffnav__pos {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5em;
+  text-align: center;
+}
+
+.navbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    color 0.2s var(--ease),
+    border-color 0.2s var(--ease),
+    background-color 0.2s var(--ease);
+}
+
+.navbtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.navbtn:hover {
+  color: var(--text);
+  border-color: var(--rule-strong);
+  background: var(--accent-soft);
+}
+
 .opt {
   display: inline-flex;
   align-items: center;
@@ -557,7 +601,16 @@ details[open] > .branch__summary > .branch__caret {
   gap: var(--s1);
   padding: 1px var(--s1);
   border-radius: 2px;
-  transition: background-color 0.2s var(--ease);
+  transition:
+    background-color 0.2s var(--ease),
+    box-shadow 0.2s var(--ease);
+}
+
+/* 差分移動で選んでいる行。罫のような左マーカーで現在地を示す */
+.row.is-current {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+  scroll-margin-block: 96px;
 }
 
 .row__sign {
