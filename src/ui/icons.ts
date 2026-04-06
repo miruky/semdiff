@@ -36,3 +36,15 @@ export const monitor = `
   <rect x="3" y="4.5" width="18" height="12" rx="1.6"/>
   <path d="M9 20h6M12 16.5V20"/>
 </svg>`;
+
+export const chevronUp = `
+<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M4 10l4-4 4 4"/>
+</svg>`;
+
+export const chevronDown = `
+<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M4 6l4 4 4-4"/>
+</svg>`;
